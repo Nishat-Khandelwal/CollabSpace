@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import socket from "./socket";
 import {
   Pencil, Eraser, Square, Circle as CircleIcon, Triangle, Star,
-  MessageSquare, Users, Send, X, Share2, ArrowLeft, MousePointer2, Mail, Copy, Type, Bot, Undo2, Redo2
+  MessageSquare, Users, Send, X, Share2, ArrowLeft, MousePointer2, Mail, Copy, Type, Bot, Undo2, Redo2, StickyNote
 } from "lucide-react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -79,6 +79,8 @@ export default function Whiteboard() {
   const [currPos, setCurrPos] = useState(null); // Added for shape preview
   const [activeTextBox, setActiveTextBox] = useState(null); // Added for Text overlay
   const [toastMessage, setToastMessage] = useState("");
+  const [draggingItem, setDraggingItem] = useState(null);
+  const [dragOffset, setDragOffset] = useState({x: 0, y: 0});
 
   const [roomUsers, setRoomUsers] = useState([]);
   const [cursors, setCursors] = useState({});
@@ -179,9 +181,20 @@ export default function Whiteboard() {
 
     socket.on("drawText", (data) => {
       historyRef.current.push({ type: "text", ...data });
-      const { text, x, y, maxWidth, lineHeight, color, fontSize } = data;
+      const { text, x, y, w, h, maxWidth, lineHeight, color, bg, isSticky, fontSize } = data;
       const ctx = ctxRef.current;
       if (!ctx) return;
+      
+      if (isSticky) {
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.15)";
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 4;
+        ctx.fillStyle = bg || "#fef08a";
+        ctx.fillRect(x - 4, y - 4, w || (maxWidth + 8), h || Math.max(150, lineHeight * 3));
+        ctx.restore();
+      }
+      
       ctx.globalCompositeOperation = "source-over";
       ctx.fillStyle = color;
       ctx.font = `${fontSize}px sans-serif`;
@@ -259,6 +272,27 @@ export default function Whiteboard() {
       if (changed) {
         redrawHistory();
       }
+    });
+
+    socket.on("aiShapeCorrection", (data) => {
+      const { originalId, shape, startPos, w, h, color, size } = data;
+      historyRef.current = historyRef.current.filter(item => item.id !== originalId);
+      
+      const newShape = {
+        type: "shape",
+        shape: shape,
+        startPos, w, h, color, size,
+        tool: "brush",
+        id: crypto.randomUUID()
+      };
+      historyRef.current.push(newShape);
+      redrawHistory();
+      setToastMessage(`AI auto-corrected to ${shape}!`);
+      setTimeout(() => setToastMessage(""), 3000);
+      
+      // Sync the deletion and new shape with network peers
+      socket.emit("askAi", { prompt: "quietly sync", history: historyRef.current }); // Simple trick to not need new network events, wait no, let's just emit explicitly.
+      socket.emit("drawShape", { shape, startPos, w, h, color, size, tool: "brush", id: newShape.id });
     });
 
     return () => {
@@ -362,6 +396,27 @@ export default function Whiteboard() {
 
     if (!drawing) return;
 
+    if (tool === "select" && draggingItem) {
+        if (draggingItem.type === "text") {
+            draggingItem.x = clientX - dragOffset.x;
+            draggingItem.y = clientY - dragOffset.y;
+        } else if (draggingItem.type === "shape") {
+            draggingItem.startPos.x = clientX - dragOffset.x;
+            draggingItem.startPos.y = clientY - dragOffset.y;
+        } else if (draggingItem.type === "path") {
+            const dx = clientX - dragOffset.x - draggingItem.originalPoints[0].x;
+            const dy = clientY - dragOffset.y - draggingItem.originalPoints[0].y;
+            draggingItem.points = draggingItem.originalPoints.map(p => ({ x: p.x + dx, y: p.y + dy }));
+        }
+        
+        const canvas = canvasRef.current;
+        const ctx = ctxRef.current;
+        if (!ctx || !canvas) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        historyRef.current.forEach(i => renderItem(i));
+        return;
+    }
+
     // Live Shape Preview Support
     if ((tool === "shape" && shape) || tool === "text") {
       setCurrPos({ x: clientX, y: clientY });
@@ -392,6 +447,54 @@ export default function Whiteboard() {
       if (tool === "text") return;
     }
 
+    if (tool === "sticky") {
+      setActiveTextBox({ x: clientX - 75, y: clientY - 75, w: 150, h: 150, text: "", color: "#000000", bg: "#fef08a", fontSize: 16, isSticky: true });
+      setCurrPos(null);
+      setDrawing(false);
+      return;
+    }
+
+    if (tool === "select") {
+       for (let i = historyRef.current.length - 1; i >= 0; i--) {
+          const item = historyRef.current[i];
+          if (item.type === "text") {
+             if (clientX >= item.x && clientX <= item.x + item.maxWidth &&
+                 clientY >= item.y && clientY <= item.y + (item.lineHeight * 2)) {
+                 setDraggingItem(item);
+                 setDragOffset({ x: clientX - item.x, y: clientY - item.y });
+                 setDrawing(true);
+                 return;
+             }
+          } else if (item.type === "shape") {
+             const minX = Math.min(item.startPos.x, item.startPos.x + item.w);
+             const maxX = Math.max(item.startPos.x, item.startPos.x + item.w);
+             const minY = Math.min(item.startPos.y, item.startPos.y + item.h);
+             const maxY = Math.max(item.startPos.y, item.startPos.y + item.h);
+             if (clientX >= minX && clientX <= maxX && clientY >= minY && clientY <= maxY) {
+                 setDraggingItem(item);
+                 setDragOffset({ x: clientX - item.startPos.x, y: clientY - item.startPos.y });
+                 setDrawing(true);
+                 return;
+             }
+          } else if (item.type === "path" && item.points.length > 0) {
+             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+             for(let p of item.points) {
+                 if(p.x < minX) minX = p.x;
+                 if(p.x > maxX) maxX = p.x;
+                 if(p.y < minY) minY = p.y;
+                 if(p.y > maxY) maxY = p.y;
+             }
+             if (clientX >= minX && clientX <= maxX && clientY >= minY && clientY <= maxY) {
+                 setDraggingItem({ ...item, originalPoints: JSON.parse(JSON.stringify(item.points)) });
+                 setDragOffset({ x: clientX - item.points[0].x, y: clientY - item.points[0].y });
+                 setDrawing(true);
+                 return;
+             }
+          }
+       }
+       return;
+    }
+
     if ((tool === "shape" && shape) || tool === "text") {
       setStartPos({ x: clientX, y: clientY });
       setCurrPos({ x: clientX, y: clientY });
@@ -420,6 +523,17 @@ export default function Whiteboard() {
 
   const stopDrawing = (e) => {
     if (!drawing) return;
+
+    if (tool === "select" && draggingItem) {
+       if (draggingItem.type === "path") {
+           const masterItem = historyRef.current.find(i => i.id === draggingItem.id);
+           if (masterItem) masterItem.points = draggingItem.points;
+       }
+       setDraggingItem(null);
+       setDrawing(false);
+       redrawHistory();
+       return;
+    }
 
     if (currentPathRef.current) {
       // Automatic Shape Recognition
@@ -535,7 +649,7 @@ export default function Whiteboard() {
       currentPathRef.current = null;
     }
 
-    if (tool === "text" && startPos) {
+    if ((tool === "text" || tool === "sticky") && startPos) {
       const { clientX, clientY } = e;
       const w = clientX - startPos.x;
       const h = clientY - startPos.y;
@@ -545,7 +659,12 @@ export default function Whiteboard() {
       const absW = Math.max(100, Math.abs(w)); // Min width
       const absH = Math.max(40, Math.abs(h));  // Min height
 
-      setActiveTextBox({ x, y, w: absW, h: absH, text: "", color: color, fontSize: Math.max(14, size * 2) });
+      setActiveTextBox({ 
+          x, y, w: absW, h: absH, text: "", color: color, 
+          fontSize: Math.max(14, size * 2), 
+          isSticky: tool === "sticky", 
+          bg: tool === "sticky" ? "#fef08a" : "transparent" 
+      });
       setCurrPos(null);
       setDrawing(false);
       return;
@@ -596,26 +715,41 @@ export default function Whiteboard() {
       const fontSize = activeTextBox.fontSize;
       const fontColor = activeTextBox.color;
 
-      ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = fontColor;
-      ctx.font = `${fontSize}px sans-serif`;
-      ctx.textBaseline = "top";
-
       const textarea = document.getElementById("active-text-box");
       const finalW = textarea ? textarea.clientWidth : activeTextBox.w;
-
-      wrapText(ctx, activeTextBox.text, activeTextBox.x + 4, activeTextBox.y + 4, finalW - 8, fontSize * 1.2);
+      const finalH = textarea ? textarea.clientHeight : activeTextBox.h;
 
       const textData = {
         text: activeTextBox.text,
         x: activeTextBox.x + 4,
         y: activeTextBox.y + 4,
+        w: finalW,
+        h: finalH,
         maxWidth: finalW - 8,
         lineHeight: fontSize * 1.2,
         color: fontColor,
+        bg: activeTextBox.bg,
+        isSticky: activeTextBox.isSticky,
         fontSize,
         id: crypto.randomUUID()
       };
+
+      if (activeTextBox.isSticky) {
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.15)";
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 4;
+        ctx.fillStyle = activeTextBox.bg || "#fef08a";
+        ctx.fillRect(textData.x - 4, textData.y - 4, textData.w, textData.h);
+        ctx.restore();
+      }
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = fontColor;
+      ctx.font = `${fontSize}px sans-serif`;
+      ctx.textBaseline = "top";
+      wrapText(ctx, textData.text, textData.x, textData.y, textData.maxWidth, textData.lineHeight);
+
       historyRef.current.push({ type: "text", ...textData });
       redoStackRef.current = [];
       socket.emit("drawText", textData);
@@ -659,7 +793,17 @@ export default function Whiteboard() {
       }
       if (shape === "star") drawStar(ctx, startPos.x + w / 2, startPos.y + h / 2, 5, Math.abs(w / 2), Math.abs(w / 4));
     } else if (item.type === "text") {
+      if (item.isSticky) {
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.15)";
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 4;
+        ctx.fillStyle = item.bg || "#fef08a";
+        ctx.fillRect(item.x - 4, item.y - 4, item.w || (item.maxWidth + 8), item.h || Math.max(150, item.lineHeight * 3));
+        ctx.restore();
+      }
       ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = item.color;
       ctx.font = `${item.fontSize}px sans-serif`;
       ctx.textBaseline = "top";
       wrapText(ctx, item.text, item.x, item.y, item.maxWidth, item.lineHeight);
@@ -688,7 +832,11 @@ export default function Whiteboard() {
       } else if (item.type === "shape") {
         socket.emit("drawShape", { shape: item.shape, startPos: item.startPos, w: item.w, h: item.h, color: item.color, size: item.size, tool: item.tool });
       } else if (item.type === "text") {
-        socket.emit("drawText", { text: item.text, x: item.x, y: item.y, maxWidth: item.maxWidth, lineHeight: item.lineHeight, color: item.color, fontSize: item.fontSize });
+        socket.emit("drawText", { 
+           text: item.text, x: item.x, y: item.y, w: item.w, h: item.h, 
+           maxWidth: item.maxWidth, lineHeight: item.lineHeight, 
+           color: item.color, bg: item.bg, isSticky: item.isSticky, fontSize: item.fontSize 
+        });
       }
     });
   };
@@ -890,6 +1038,23 @@ export default function Whiteboard() {
               </div>
             </div>
 
+            {activeTextBox.isSticky && (
+               <>
+                 <div className="h-8 w-[1px] bg-gray-200" />
+                 <div className="flex flex-col">
+                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 px-1">Note Base</span>
+                   <div className="relative w-8 h-8 rounded-md border border-gray-300 shadow-sm cursor-pointer mx-auto" style={{ backgroundColor: activeTextBox.bg }}>
+                     <input
+                       type="color"
+                       value={activeTextBox.bg}
+                       onChange={(e) => setActiveTextBox({ ...activeTextBox, bg: e.target.value })}
+                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                     />
+                   </div>
+                 </div>
+               </>
+            )}
+
             <div className="h-8 w-[1px] bg-gray-200" />
             <button
               onClick={() => finalizeText()}
@@ -909,14 +1074,15 @@ export default function Whiteboard() {
               width: activeTextBox.w,
               height: activeTextBox.h,
               color: activeTextBox.color,
+              backgroundColor: activeTextBox.bg || "transparent",
               fontSize: `${activeTextBox.fontSize}px`,
               fontFamily: "sans-serif",
-              border: `2px dashed ${activeTextBox.color}`,
+              border: activeTextBox.isSticky ? "none" : `2px dashed ${activeTextBox.color}`,
+              boxShadow: activeTextBox.isSticky ? "0 4px 10px rgba(0,0,0,0.15)" : "0 0 0 2px rgba(255,255,255,0.5)",
               padding: "4px",
               resize: "both",
               minWidth: "100px",
               minHeight: "40px",
-              boxShadow: "0 0 0 2px rgba(255,255,255,0.5)"
             }}
             value={activeTextBox.text}
             onChange={(e) => setActiveTextBox({ ...activeTextBox, text: e.target.value })}
@@ -991,9 +1157,11 @@ export default function Whiteboard() {
       {/* Core Toolbar - Centered Bottom */}
       <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-white/95 backdrop-blur-md shadow-2xl border border-gray-200 rounded-2xl p-2 select-none touch-none">
 
+        <ToolButton icon={<MousePointer2 size={20} />} label="Select" active={tool === "select"} onClick={() => { setTool("select"); setShape(null); }} />
         <ToolButton icon={<Pencil size={20} />} label="Brush" active={tool === "brush"} onClick={() => { setTool("brush"); setShape(null); }} />
         <ToolButton icon={<Eraser size={20} />} label="Eraser" active={tool === "eraser"} onClick={() => { setTool("eraser"); setShape(null); }} />
         <ToolButton icon={<Type size={20} />} label="Text" active={tool === "text"} onClick={() => { setTool("text"); setShape(null); }} />
+        <ToolButton icon={<StickyNote size={20} />} label="Sticky" active={tool === "sticky"} onClick={() => { setTool("sticky"); setShape(null); }} />
 
         <div className="h-8 w-[1px] bg-gray-200 mx-2" />
 

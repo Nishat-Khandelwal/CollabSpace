@@ -11,8 +11,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+
+
 const usersDB = {}; // storing usernames
 const JWT_SECRET = "collabSpaceSecretKey123";
+
+// Remove GOOGLE_API_KEY to prevent SDK from overriding GEMINI_API_KEY if exists in environment
+delete process.env.GOOGLE_API_KEY;
 
 // Initialize Gemini Client
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
@@ -230,7 +235,52 @@ When updating or deleting, FIND the 'id' of the element in the history matching 
 
     } catch (err) {
       console.error("AI Generation error:", err);
-      socket.emit("aiResponse", { message: "I ran into a server error processing that request. My connection to the Gemini API failed.", actions: [] });
+      socket.emit("aiResponse", { message: "AI Request Failed: " + (err.message || err.toString()), actions: [] });
+    }
+  });
+
+  socket.on("recognizeShape", async (data) => {
+    const info = socketInfo[socket.id];
+    if (!info || !ai) return;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          {
+            inlineData: {
+              data: data.image,
+              mimeType: "image/png",
+            },
+          },
+          "Analyze the drawn image. It's a single continuous stroke. Is it closest to a 'circle', 'rectangle', 'triangle', or 'star'? Respond with STRICTLY a valid JSON object like {\"shape\": \"circle\"}. If you are extremely uncertain or it doesn't look like any of these, respond with {\"shape\": \"none\"}."
+        ],
+        config: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      const text = response.text;
+      let parsed = { shape: "none" };
+      try {
+        parsed = JSON.parse(text);
+      } catch (err) {
+        console.warn("Invalid JSON from AI shape recognition:", text);
+      }
+
+      if (parsed.shape && parsed.shape !== "none") {
+        socket.emit("aiShapeCorrection", {
+          originalId: data.id,
+          shape: parsed.shape,
+          startPos: data.startPos,
+          w: data.w,
+          h: data.h,
+          color: data.color,
+          size: data.size
+        });
+      }
+    } catch (err) {
+      console.error("AI Shape Recognition error:", err);
     }
   });
 
