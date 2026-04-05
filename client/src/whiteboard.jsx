@@ -110,6 +110,19 @@ export default function Whiteboard() {
 
     socket.connect();
     socket.emit("joinRoom", { roomId, username });
+    socket.emit("requestSync");
+
+    socket.on("provideSync", (targetId) => {
+      if (historyRef.current.length > 0) {
+        socket.emit("deliverSync", { targetId, history: historyRef.current });
+      }
+    });
+
+    socket.on("initBoard", (history) => {
+      historyRef.current = history;
+      redoStackRef.current = [];
+      redrawHistory(false);
+    });
 
     const resizeCanvas = () => {
       const canvas = canvasRef.current;
@@ -810,7 +823,7 @@ export default function Whiteboard() {
     }
   };
 
-  const redrawHistory = () => {
+  const redrawHistory = (syncToPeers = true) => {
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
     if (!canvas || !ctx) return;
@@ -821,24 +834,26 @@ export default function Whiteboard() {
 
     snapshot.forEach(item => renderItem(item));
 
-    // Sync remote peers
-    socket.emit("clearBoard");
-    snapshot.forEach(item => {
-      if (item.type === "path" && item.points?.length > 0) {
-        socket.emit("beginPath", { id: item.id, x: item.points[0].x, y: item.points[0].y, color: item.color, size: item.size, tool: item.tool });
-        for (let i = 1; i < item.points.length; i++) {
-          socket.emit("draw", { id: item.id, x: item.points[i].x, y: item.points[i].y });
+    if (syncToPeers) {
+      // Sync remote peers
+      socket.emit("clearBoard");
+      snapshot.forEach(item => {
+        if (item.type === "path" && item.points?.length > 0) {
+          socket.emit("beginPath", { id: item.id, x: item.points[0].x, y: item.points[0].y, color: item.color, size: item.size, tool: item.tool });
+          for (let i = 1; i < item.points.length; i++) {
+            socket.emit("draw", { id: item.id, x: item.points[i].x, y: item.points[i].y });
+          }
+        } else if (item.type === "shape") {
+          socket.emit("drawShape", { shape: item.shape, startPos: item.startPos, w: item.w, h: item.h, color: item.color, size: item.size, tool: item.tool });
+        } else if (item.type === "text") {
+          socket.emit("drawText", { 
+             text: item.text, x: item.x, y: item.y, w: item.w, h: item.h, 
+             maxWidth: item.maxWidth, lineHeight: item.lineHeight, 
+             color: item.color, bg: item.bg, isSticky: item.isSticky, fontSize: item.fontSize 
+          });
         }
-      } else if (item.type === "shape") {
-        socket.emit("drawShape", { shape: item.shape, startPos: item.startPos, w: item.w, h: item.h, color: item.color, size: item.size, tool: item.tool });
-      } else if (item.type === "text") {
-        socket.emit("drawText", { 
-           text: item.text, x: item.x, y: item.y, w: item.w, h: item.h, 
-           maxWidth: item.maxWidth, lineHeight: item.lineHeight, 
-           color: item.color, bg: item.bg, isSticky: item.isSticky, fontSize: item.fontSize 
-        });
-      }
-    });
+      });
+    }
   };
 
   const clearCanvas = () => {

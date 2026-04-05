@@ -191,6 +191,21 @@ io.on("connection", (socket) => {
     if (info) socket.to(info.room).emit("clearBoard");
   });
 
+  socket.on("requestSync", () => {
+    const info = socketInfo[socket.id];
+    if (info) {
+      const allSids = Array.from(io.sockets.adapter.rooms.get(info.room) || []);
+      const otherSid = allSids.find(sid => sid !== socket.id);
+      if (otherSid) {
+        io.to(otherSid).emit("provideSync", socket.id);
+      }
+    }
+  });
+
+  socket.on("deliverSync", ({ targetId, history }) => {
+    io.to(targetId).emit("initBoard", history);
+  });
+
   socket.on("askAi", async ({ prompt, history }) => {
     const info = socketInfo[socket.id];
     if (!info) return;
