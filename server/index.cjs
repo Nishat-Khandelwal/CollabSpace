@@ -4,7 +4,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
@@ -22,14 +22,8 @@ delete process.env.GOOGLE_API_KEY;
 // Initialize Gemini Client
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
-// ─── Nodemailer Gmail Transporter ───
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// ─── Resend API Client ───
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ─── Share via Email Endpoint ───
 app.post("/api/share-email", async (req, res) => {
@@ -48,8 +42,8 @@ app.post("/api/share-email", async (req, res) => {
   const sender = senderName || "A collaborator";
 
   try {
-    await transporter.sendMail({
-      from: `"CollabSpace Whiteboard" <${process.env.EMAIL_USER}>`,
+    const { data, error } = await resend.emails.send({
+      from: "CollabSpace <onboarding@resend.dev>",
       to: email,
       subject: `${sender} invited you to a whiteboard project`,
       html: `
@@ -68,10 +62,15 @@ app.post("/api/share-email", async (req, res) => {
       `,
     });
 
-    res.json({ message: "Invitation email sent successfully!" });
+    if (error) {
+      console.error("Resend error:", error);
+      return res.status(500).json({ message: "Failed to send email via API.", error });
+    }
+
+    res.json({ message: "Invitation email sent successfully!", data });
   } catch (err) {
-    console.error("Email send error:", err);
-    res.status(500).json({ message: "Failed to send email. Check server credentials." });
+    console.error("Email API catch error:", err);
+    res.status(500).json({ message: "Server error while sending email." });
   }
 });
 
