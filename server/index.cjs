@@ -102,7 +102,8 @@ const fs = require("fs");
 const distPath = path.join(__dirname, "../client/dist");
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
-  app.get("*", (req, res) => {
+  // Catch-all route to serve React app for client-side routing
+  app.use((req, res) => {
     res.sendFile(path.join(distPath, "index.html"));
   });
 }
