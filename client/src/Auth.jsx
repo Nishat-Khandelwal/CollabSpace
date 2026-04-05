@@ -4,6 +4,8 @@ import axios from "axios";
 import { ArrowRight } from "lucide-react";
 
 
+import { API_BASE } from "./socket";
+
 export default function Auth() {
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
@@ -21,7 +23,7 @@ export default function Auth() {
     setError("");
 
     try {
-      const res = await axios.post("http://localhost:5000/login", {
+      const res = await axios.post(`${API_BASE}/login`, {
         username: username.trim()
       });
 

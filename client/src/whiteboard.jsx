@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import socket from "./socket";
+import socket, { API_BASE } from "./socket";
 import {
   Pencil, Eraser, Square, Circle as CircleIcon, Triangle, Star,
   MessageSquare, Users, Send, X, Share2, ArrowLeft, MousePointer2, Mail, Copy, Type, Bot, Undo2, Redo2, StickyNote
@@ -1329,7 +1329,7 @@ export default function Whiteboard() {
                     if (!shareEmail.trim() || shareLoading) return;
                     setShareLoading(true);
                     try {
-                      const res = await fetch("http://localhost:5000/api/share-email", {
+                      const res = await fetch(`${API_BASE}/api/share-email`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
