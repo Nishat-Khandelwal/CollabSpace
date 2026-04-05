@@ -96,6 +96,17 @@ app.post("/login", (req, res) => {
   res.json({ token, username });
 });
 
+const path = require("path");
+const fs = require("fs");
+
+const distPath = path.join(__dirname, "../client/dist");
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
