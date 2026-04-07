@@ -4,7 +4,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
+
 const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
@@ -22,14 +22,7 @@ delete process.env.GOOGLE_API_KEY;
 // Initialize Gemini Client
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
-// ─── Nodemailer Gmail Transport ───
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+
 
 // ─── Share via Email Endpoint ───
 app.post("/api/share-email", async (req, res) => {
@@ -48,25 +41,38 @@ app.post("/api/share-email", async (req, res) => {
   const sender = senderName || "A collaborator";
 
   try {
-    await transporter.sendMail({
-      from: `"CollabSpace" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: `${sender} invited you to a whiteboard project`,
-      html: `
-        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px; background: #ffffff; border-radius: 16px; border: 1px solid #e5e7eb;">
-          <h2 style="margin: 0 0 8px 0; font-size: 22px; color: #111827;">You've been invited! 🎨</h2>
-          <p style="margin: 0 0 24px 0; font-size: 15px; color: #6b7280; line-height: 1.6;">
-            <strong style="color: #111827;">${sender}</strong> has invited you to collaborate on a whiteboard project.
-          </p>
-          <a href="${link}" style="display: inline-block; padding: 12px 28px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px;">
-            Join Whiteboard →
-          </a>
-          <p style="margin: 24px 0 0 0; font-size: 12px; color: #9ca3af;">
-            Or copy this link: <a href="${link}" style="color: #2563eb; word-break: break-all;">${link}</a>
-          </p>
-        </div>
-      `,
+    const response = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service_id: process.env.EMAILJS_SERVICE_ID,
+        template_id: process.env.EMAILJS_TEMPLATE_ID,
+        user_id: process.env.EMAILJS_PUBLIC_KEY,
+        accessToken: process.env.EMAILJS_PRIVATE_KEY,
+        template_params: {
+          to_email: email,
+          html_message: `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px; background: #ffffff; border-radius: 16px; border: 1px solid #e5e7eb;">
+              <h2 style="margin: 0 0 8px 0; font-size: 22px; color: #111827;">You've been invited! 🎨</h2>
+              <p style="margin: 0 0 24px 0; font-size: 15px; color: #6b7280; line-height: 1.6;">
+                <strong style="color: #111827;">${sender}</strong> has invited you to collaborate on a whiteboard project.
+              </p>
+              <a href="${link}" style="display: inline-block; padding: 12px 28px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px;">
+                Join Whiteboard →
+              </a>
+              <p style="margin: 24px 0 0 0; font-size: 12px; color: #9ca3af;">
+                Or copy this link: <a href="${link}" style="color: #2563eb; word-break: break-all;">${link}</a>
+              </p>
+            </div>
+          `
+        }
+      })
     });
+
+    if (!response.ok) {
+       const text = await response.text();
+       throw new Error(text || "Failed to send via EmailJS");
+    }
 
     res.json({ message: "Invitation email sent successfully!" });
   } catch (err) {
