@@ -50,21 +50,9 @@ app.post("/api/share-email", async (req, res) => {
         user_id: process.env.EMAILJS_PUBLIC_KEY,
         accessToken: process.env.EMAILJS_PRIVATE_KEY,
         template_params: {
-          to_email: email,
-          html_message: `
-            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px; background: #ffffff; border-radius: 16px; border: 1px solid #e5e7eb;">
-              <h2 style="margin: 0 0 8px 0; font-size: 22px; color: #111827;">You've been invited! 🎨</h2>
-              <p style="margin: 0 0 24px 0; font-size: 15px; color: #6b7280; line-height: 1.6;">
-                <strong style="color: #111827;">${sender}</strong> has invited you to collaborate on a whiteboard project.
-              </p>
-              <a href="${link}" style="display: inline-block; padding: 12px 28px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px;">
-                Join Whiteboard →
-              </a>
-              <p style="margin: 24px 0 0 0; font-size: 12px; color: #9ca3af;">
-                Or copy this link: <a href="${link}" style="color: #2563eb; word-break: break-all;">${link}</a>
-              </p>
-            </div>
-          `
+          from_name: sender,
+          join_link: link,
+          email: email
         }
       })
     });
