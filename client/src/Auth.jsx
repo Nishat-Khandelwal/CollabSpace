@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { ArrowRight } from "lucide-react";
 
@@ -8,6 +8,7 @@ import { API_BASE } from "./socket";
 
 export default function Auth() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -30,7 +31,15 @@ export default function Auth() {
       if (res.data.token) {
         localStorage.setItem("collab_token", res.data.token);
         localStorage.setItem("collab_username", res.data.username);
-        navigate("/dashboard");
+        
+        const searchParams = new URLSearchParams(location.search);
+        const redirectUrl = searchParams.get("redirect");
+        
+        if (redirectUrl) {
+          navigate(redirectUrl);
+        } else {
+          navigate("/dashboard");
+        }
       }
     } catch (err) {
       console.error("Login failed:", err);

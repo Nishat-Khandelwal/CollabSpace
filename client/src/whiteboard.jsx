@@ -97,7 +97,7 @@ export default function Whiteboard() {
 
   useEffect(() => {
     if (!username) {
-      navigate("/");
+      navigate(`/?redirect=${encodeURIComponent(location.pathname + location.search)}`);
       return;
     }
 
