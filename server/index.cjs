@@ -52,7 +52,8 @@ app.post("/api/share-email", async (req, res) => {
         template_params: {
           from_name: sender,
           join_link: link,
-          email: email
+          email: email,
+          to_email: email
         }
       })
     });
