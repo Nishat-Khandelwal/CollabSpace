@@ -182,6 +182,11 @@ io.on("connection", (socket) => {
     if (info) socket.to(info.room).emit("drawText", data);
   });
 
+  socket.on("drawUml", (data) => {
+    const info = socketInfo[socket.id];
+    if (info) socket.to(info.room).emit("drawUml", data);
+  });
+
   socket.on("clearBoard", () => {
     const info = socketInfo[socket.id];
     if (info) socket.to(info.room).emit("clearBoard");
@@ -213,7 +218,8 @@ io.on("connection", (socket) => {
 
     try {
       const systemInstruction = `You are an intelligent AI assistant in a collaborative whiteboard app. Your goal is to interpret the user's prompt and modify their whiteboard accordingly.
-The whiteboard supports freehand drawings (type="path"), shapes (type="shape", shape="rectangle"|"circle"|"triangle"|"star"), and text boxes (type="text").
+The whiteboard supports freehand drawings (type="path"), shapes (type="shape", shape="rectangle"|"circle"|"triangle"|"star"), text boxes (type="text"), and UML diagram elements (type="uml", umlType="class"|"actor"|"usecase"|"action"|"decision"|"start_node"|"end_node"|"fork_bar"|"lifeline"|"state"|"initial_state"|"final_state"|"node3d"|"artifact"|"component").
+UML elements have properties: x, y, w, h, color, name, text, attributes (array, for class), methods (array, for class).
 Each item on the whiteboard has a unique 'id', 'color', 'size', and positioning ('w', 'h', 'startPos' etc). Check 'history' given below.
 
 Here is the current whiteboard state (JSON array):
@@ -229,6 +235,7 @@ You MUST return STRICTLY a SINGLE JSON object, NO markdown, NO text outside the 
     { "action": "update", "id": "<id_of_existing_item>", "changes": { "color": "red" } },
     { "action": "drawShape", "item": { "type": "shape", "shape": "circle", "startPos": { "x": 500, "y": 300 }, "w": 200, "h": 200, "color": "red", "size": 3, "tool": "brush", "id": "gen_uuid_1" } },
     { "action": "drawText", "item": { "type": "text", "text": "Hello User!", "x": 500, "y": 300, "maxWidth": 200, "lineHeight": 24, "color": "black", "fontSize": 20, "id": "gen_uuid_2" } },
+    { "action": "drawUml", "item": { "type": "uml", "umlType": "class", "x": 400, "y": 200, "w": 200, "h": 140, "color": "black", "name": "MyClass", "attributes": ["- id: int"], "methods": ["+ getId(): int"], "id": "gen_uuid_3" } },
     { "action": "clear" }
   ]
 }

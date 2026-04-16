@@ -3,10 +3,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 import socket, { API_BASE } from "./socket";
 import {
   Pencil, Eraser, Square, Circle as CircleIcon, Triangle, Star,
-  MessageSquare, Users, Send, X, Share2, ArrowLeft, MousePointer2, Mail, Copy, Type, Bot, Undo2, Redo2, StickyNote
+  MessageSquare, Users, Send, X, Share2, ArrowLeft, MousePointer2, Mail, Copy, Type, Bot, Undo2, Redo2, StickyNote, GitBranch
 } from "lucide-react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { UmlPanel, UmlClassModal, renderUmlItem, UML_DEFAULTS } from "./umlHelpers";
 import { format } from "date-fns";
 
 function cn(...inputs) {
@@ -81,6 +82,12 @@ export default function Whiteboard() {
   const [toastMessage, setToastMessage] = useState("");
   const [draggingItem, setDraggingItem] = useState(null);
   const [dragOffset, setDragOffset] = useState({x: 0, y: 0});
+
+  const [isUmlPanelOpen, setIsUmlPanelOpen] = useState(false);
+  const [umlMode, setUmlMode] = useState(null);
+  const [umlConfig, setUmlConfig] = useState(null);
+  const [umlActiveTab, setUmlActiveTab] = useState("class");
+  const [umlClassModal, setUmlClassModal] = useState(null);
 
   const [roomUsers, setRoomUsers] = useState([]);
   const [cursors, setCursors] = useState({});
@@ -215,6 +222,12 @@ export default function Whiteboard() {
       wrapText(ctx, text, x, y, maxWidth, lineHeight);
     });
 
+    socket.on("drawUml", (data) => {
+      historyRef.current.push({ type: "uml", ...data });
+      const ctx = ctxRef.current;
+      if (ctx) renderUmlItem(ctx, { type: "uml", ...data });
+    });
+
     socket.on("clearBoard", () => {
       historyRef.current = [];
       remotePathsRef.current = {};
@@ -275,6 +288,9 @@ export default function Whiteboard() {
           } else if (act.action === "drawText" && act.item) {
              historyRef.current.push(act.item);
              changed = true;
+          } else if (act.action === "drawUml" && act.item) {
+             historyRef.current.push(act.item);
+             changed = true;
           } else if (act.action === "clear") {
              historyRef.current = [];
              changed = true;
@@ -314,6 +330,7 @@ export default function Whiteboard() {
       socket.off("draw");
       socket.off("drawShape");
       socket.off("drawText");
+      socket.off("drawUml");
       socket.off("clearBoard");
       socket.off("roomUsersUpdate");
       socket.off("userStatusChange");
@@ -356,6 +373,14 @@ export default function Whiteboard() {
     resetIdleTimer();
     return () => { if (idleTimerRef.current) clearTimeout(idleTimerRef.current); };
   }, [resetIdleTimer]);
+
+  useEffect(() => {
+    if (tool !== "uml") {
+      setIsUmlPanelOpen(false);
+      setUmlMode(null);
+      setUmlConfig(null);
+    }
+  }, [tool]);
 
   useEffect(() => {
     if (drawerOpen && activeTab === "chat" && messagesEndRef.current) {
@@ -420,6 +445,9 @@ export default function Whiteboard() {
             const dx = clientX - dragOffset.x - draggingItem.originalPoints[0].x;
             const dy = clientY - dragOffset.y - draggingItem.originalPoints[0].y;
             draggingItem.points = draggingItem.originalPoints.map(p => ({ x: p.x + dx, y: p.y + dy }));
+        } else if (draggingItem.type === "uml") {
+            draggingItem.x = clientX - dragOffset.x;
+            draggingItem.y = clientY - dragOffset.y;
         }
         
         const canvas = canvasRef.current;
@@ -460,6 +488,41 @@ export default function Whiteboard() {
       if (tool === "text") return;
     }
 
+    if (tool === "uml") {
+      if (umlMode) {
+        const defaults = UML_DEFAULTS[umlMode] || { w: 160, h: 80 };
+        const umlItem = {
+          type: "uml",
+          umlType: umlMode,
+          x: clientX - defaults.w / 2,
+          y: clientY - defaults.h / 2,
+          w: defaults.w,
+          h: defaults.h,
+          color: color,
+          name: umlConfig?.name || umlMode.charAt(0).toUpperCase() + umlMode.slice(1).replace(/_/g, " "),
+          text: umlConfig?.text || "",
+          attributes: umlConfig?.attributes || [],
+          methods: umlConfig?.methods || [],
+          id: crypto.randomUUID(),
+        };
+        if (umlMode === "class") {
+          const titleH = 32;
+          const attrH = Math.max(28, umlItem.attributes.length * 20 + 10);
+          const methodH = Math.max(28, umlItem.methods.length * 20 + 10);
+          umlItem.h = titleH + attrH + methodH;
+        }
+        historyRef.current.push(umlItem);
+        redoStackRef.current = [];
+        renderItem(umlItem);
+        socket.emit("drawUml", umlItem);
+        if (umlMode === "class") {
+          setUmlMode(null);
+          setUmlConfig(null);
+        }
+      }
+      return;
+    }
+
     if (tool === "sticky") {
       setActiveTextBox({ x: clientX - 75, y: clientY - 75, w: 150, h: 150, text: "", color: "#000000", bg: "#fef08a", fontSize: 16, isSticky: true });
       setCurrPos(null);
@@ -489,7 +552,15 @@ export default function Whiteboard() {
                  setDrawing(true);
                  return;
              }
-          } else if (item.type === "path" && item.points.length > 0) {
+           } else if (item.type === "uml") {
+              if (clientX >= item.x && clientX <= item.x + item.w &&
+                  clientY >= item.y && clientY <= item.y + item.h) {
+                  setDraggingItem(item);
+                  setDragOffset({ x: clientX - item.x, y: clientY - item.y });
+                  setDrawing(true);
+                  return;
+              }
+           } else if (item.type === "path" && item.points.length > 0) {
              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
              for(let p of item.points) {
                  if(p.x < minX) minX = p.x;
@@ -820,6 +891,8 @@ export default function Whiteboard() {
       ctx.font = `${item.fontSize}px sans-serif`;
       ctx.textBaseline = "top";
       wrapText(ctx, item.text, item.x, item.y, item.maxWidth, item.lineHeight);
+    } else if (item.type === "uml") {
+      renderUmlItem(ctx, item);
     }
   };
 
@@ -851,6 +924,8 @@ export default function Whiteboard() {
              maxWidth: item.maxWidth, lineHeight: item.lineHeight, 
              color: item.color, bg: item.bg, isSticky: item.isSticky, fontSize: item.fontSize 
           });
+        } else if (item.type === "uml") {
+          socket.emit("drawUml", item);
         }
       });
     }
@@ -1191,6 +1266,18 @@ export default function Whiteboard() {
           </div>
         </div>
 
+        <div className="relative">
+          <ToolButton icon={<GitBranch size={20} />} label="UML Diagrams" active={tool === "uml"} onClick={() => {
+            if (isUmlPanelOpen) {
+              setIsUmlPanelOpen(false);
+              if (tool === "uml") { setTool("brush"); setUmlMode(null); setUmlConfig(null); }
+            } else {
+              setIsUmlPanelOpen(true);
+              setTool("uml");
+            }
+          }} />
+        </div>
+
         <div className="h-8 w-[1px] bg-gray-200 mx-2" />
 
         <div className="flex items-center gap-4 px-3">
@@ -1417,6 +1504,43 @@ export default function Whiteboard() {
           </div>
         </div>
       )}
+
+      {/* UML Diagram Panel */}
+      <UmlPanel
+        isOpen={isUmlPanelOpen}
+        umlActiveTab={umlActiveTab}
+        setUmlActiveTab={setUmlActiveTab}
+        umlMode={umlMode}
+        onSelectElement={(type, config) => {
+          setUmlMode(type);
+          setUmlConfig(config);
+          setTool("uml");
+        }}
+        onOpenClassModal={() => {
+          setUmlClassModal({ name: "ClassName", attributes: ["- attribute: Type"], methods: ["+ method(): void"] });
+        }}
+        onClose={() => {
+          setIsUmlPanelOpen(false);
+          if (tool === "uml") { setTool("brush"); setUmlMode(null); setUmlConfig(null); }
+        }}
+      />
+
+      {/* UML Class Config Modal */}
+      <UmlClassModal
+        data={umlClassModal}
+        onChange={setUmlClassModal}
+        onPlace={() => {
+          setUmlMode("class");
+          setUmlConfig({
+            name: umlClassModal.name,
+            attributes: umlClassModal.attributes.filter(a => a.trim()),
+            methods: umlClassModal.methods.filter(m => m.trim()),
+          });
+          setTool("uml");
+          setUmlClassModal(null);
+        }}
+        onClose={() => setUmlClassModal(null)}
+      />
 
       {/* Copy Link Toast (Vercel Style) */}
       <div className={cn("absolute bottom-8 right-8 bg-black text-white px-5 py-4 rounded-xl shadow-2xl font-bold text-sm transition-all duration-300 z-[60] flex items-center gap-3", toastMessage ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0 pointer-events-none")}>
